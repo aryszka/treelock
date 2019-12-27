@@ -192,7 +192,12 @@ func (l *Lock) notifyNext() (chan<- releaseLock, releaseLock) {
 	}
 
 	l.waiting = l.waiting[1:]
-	return next.notify, func() { l.release <- next }
+	return next.notify, func() {
+		select {
+		case l.release <- next:
+		case <-l.quit:
+		}
+	}
 }
 
 func (l *Lock) doAcquire(i *item) {
@@ -262,36 +267,29 @@ func (l *Lock) run() {
 		case notify <- release:
 			notify, release = nil, nil
 		case <-l.quit:
-			// TODO: cleanup
 			return
 		}
 	}
 }
 
-func (l *Lock) ReadNode(path ...string) releaseLock {
-	i := newItem(readLock, path)
-	l.acquire <- i
-	return <-i.notify
+func (l *Lock) requestLock(typ lockType, path []string) releaseLock {
+	i := newItem(typ, path)
+	select {
+	case l.acquire <- i:
+	case <-l.quit:
+		return func() {}
+	}
+
+	select {
+	case release := <-i.notify:
+		return release
+	case <-l.quit:
+		return func() {}
+	}
 }
 
-func (l *Lock) WriteNode(path ...string) releaseLock {
-	i := newItem(writeLock, path)
-	l.acquire <- i
-	return <-i.notify
-}
-
-func (l *Lock) ReadTree(path ...string) releaseLock {
-	i := newItem(treeReadLock, path)
-	l.acquire <- i
-	return <-i.notify
-}
-
-func (l *Lock) WriteTree(path ...string) releaseLock {
-	i := newItem(treeWriteLock, path)
-	l.acquire <- i
-	return <-i.notify
-}
-
-func (l *Lock) Close() {
-	close(l.quit)
-}
+func (l *Lock) ReadNode(path ...string) releaseLock  { return l.requestLock(readLock, path) }
+func (l *Lock) WriteNode(path ...string) releaseLock { return l.requestLock(writeLock, path) }
+func (l *Lock) ReadTree(path ...string) releaseLock  { return l.requestLock(treeReadLock, path) }
+func (l *Lock) WriteTree(path ...string) releaseLock { return l.requestLock(treeWriteLock, path) }
+func (l *Lock) Close()                               { close(l.quit) }

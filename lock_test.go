@@ -895,3 +895,32 @@ func TestLockRace(t *testing.T) {
 	<-done1
 	<-done2
 }
+
+func TestClose(t *testing.T) {
+	t.Run("before requested", func(t *testing.T) {
+		l := New()
+		l.Close()
+		r := l.WriteNode()
+		r()
+	})
+
+	t.Run("before acquired", func(t *testing.T) {
+		l := New()
+		r1 := l.WriteNode()
+		go func() {
+			r2 := l.WriteNode()
+			r2()
+		}()
+
+		time.Sleep(minDelay)
+		l.Close()
+		r1()
+	})
+
+	t.Run("before released", func(t *testing.T) {
+		l := New()
+		r := l.WriteNode()
+		l.Close()
+		r()
+	})
+}
