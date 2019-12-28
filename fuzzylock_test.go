@@ -9,8 +9,10 @@ import (
 
 const (
 	fuzzyDuration    = time.Second
-	fuzzyConcurrency = 128
+	fuzzyConcurrency = 256
 )
+
+type counter chan int
 
 type intRange struct {
 	min, max int
@@ -29,7 +31,26 @@ var (
 	busyDuration    = timeRange{300 * time.Microsecond, 1200 * time.Microsecond}
 	fuzzyTreeLevels = 6
 	firstLevelNodes = intRange{3, 5}
+	cnt             = newCounter()
 )
+
+func newCounter() counter {
+	c := make(chan int, 1)
+	c <- 0
+	return c
+}
+
+func (c counter) inc() {
+	v := <-c
+	v++
+	c <- v
+}
+
+func (c counter) value() int {
+	v := <-c
+	c <- v
+	return v
+}
 
 func randomInt(r intRange) int {
 	return r.min + rand.Intn(r.max-r.min)
@@ -71,6 +92,8 @@ func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) release
 
 		n.writing = false
 	}
+
+	cnt.inc()
 }
 
 func selectMethod(l *Lock) (func(...string) releaseLock, bool) {
@@ -155,6 +178,7 @@ func getAllPaths(node *testNode) [][]string {
 }
 
 func TestLockFuzzy(t *testing.T) {
+	before := cnt.value()
 	l := New()
 	defer l.Close()
 	tree := buildTree()
@@ -182,4 +206,5 @@ func TestLockFuzzy(t *testing.T) {
 
 	wg.Wait()
 	close(done)
+	t.Log("access", cnt.value()-before)
 }

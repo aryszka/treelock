@@ -12,26 +12,25 @@ const (
 type releaseLock func()
 
 type item struct {
-	typ    lockType
-	path   []string
-	notify chan releaseLock
+	typ       lockType
+	path      []string
+	node      *node
+	blockedBy []*item
+	blocking  []*item
+	notify    chan releaseLock
 }
 
 type node struct {
-	children       map[string]*node
-	readingNode    int
-	writingNode    bool
-	readingBranch  int
-	writingBranch  int
-	readingSubtree int
-	writingSubtree bool
+	children map[string]*node
+	items    []*item
 }
 
 type Lock struct {
-	root             *node
-	waiting          []*item
-	acquire, release chan *item
-	quit             chan struct{}
+	root    *node
+	notify  []*item
+	acquire chan *item
+	release chan *item
+	quit    chan struct{}
 }
 
 func newItem(t lockType, path []string) *item {
@@ -74,7 +73,7 @@ func (l *Lock) getNodePath(path []string) []*node {
 	return np
 }
 
-func (l *Lock) cleanup(path []string) {
+func (l *Lock) removeNode(path []string) {
 	np := l.getNodePath(path)
 	for {
 		if len(np) == 1 {
@@ -82,9 +81,7 @@ func (l *Lock) cleanup(path []string) {
 		}
 
 		n, p := np[len(np)-1], np[len(np)-2]
-		if n.readingNode > 0 || n.writingNode ||
-			n.readingBranch > 0 || n.writingBranch > 0 ||
-			n.readingSubtree > 0 || n.writingSubtree {
+		if len(n.items) > 0 {
 			return
 		}
 
@@ -97,155 +94,107 @@ func (l *Lock) cleanup(path []string) {
 	}
 }
 
-func (l *Lock) notifyNext() (chan<- releaseLock, releaseLock) {
-	if len(l.waiting) == 0 {
-		return nil, nil
+func getLockedNodes(n *node) []*node {
+	var ln []*node
+	if len(n.items) > 0 {
+		ln = append(ln, n)
 	}
 
-	next := l.waiting[0]
-	np := l.getNodePath(next.path)
-	switch next.typ {
-	case readLock:
-		n := np[len(np)-1]
-		if n.writingNode {
-			return nil, nil
-		}
-
-		var p *node
-		pp := np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			if p.writingSubtree {
-				return nil, nil
-			}
-		}
-
-		n.readingNode++
-		pp = np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.readingBranch++
-		}
-	case writeLock:
-		n := np[len(np)-1]
-		if n.writingNode || n.readingNode > 0 {
-			return nil, nil
-		}
-
-		var p *node
-		pp := np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			if p.writingSubtree || p.readingSubtree > 0 {
-				return nil, nil
-			}
-		}
-
-		n.writingNode = true
-		pp = np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.writingBranch++
-		}
-	case treeReadLock:
-		n := np[len(np)-1]
-		if n.writingBranch > 0 {
-			return nil, nil
-		}
-
-		var p *node
-		pp := np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			if p.writingSubtree {
-				return nil, nil
-			}
-		}
-
-		n.readingSubtree++
-		pp = np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.readingBranch++
-		}
-	case treeWriteLock:
-		n := np[len(np)-1]
-		if n.writingBranch > 0 || n.readingBranch > 0 {
-			return nil, nil
-		}
-
-		var p *node
-		pp := np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			if p.writingSubtree || p.readingSubtree > 0 {
-				return nil, nil
-			}
-		}
-
-		n.writingSubtree = true
-		pp = np
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.writingBranch++
-		}
+	for _, c := range n.children {
+		ln = append(ln, getLockedNodes(c)...)
 	}
 
-	l.waiting = l.waiting[1:]
-	return next.notify, func() {
-		select {
-		case l.release <- next:
-		case <-l.quit:
-		}
-	}
+	return ln
 }
 
 func (l *Lock) doAcquire(i *item) {
-	l.waiting = append(l.waiting, i)
-}
+	np := l.getNodePath(i.path)
+	n := np[len(np)-1]
 
-func (l *Lock) doRelease(i *item) {
-	nn := l.getNodePath(i.path)
-	switch i.typ {
-	case readLock:
-		n := nn[len(nn)-1]
-		n.readingNode--
-		pp := nn
-		var p *node
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.readingBranch--
-		}
-	case writeLock:
-		n := nn[len(nn)-1]
-		n.writingNode = false
-		pp := nn
-		var p *node
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.writingBranch--
-		}
-	case treeReadLock:
-		n := nn[len(nn)-1]
-		n.readingSubtree--
-		pp := nn
-		var p *node
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.readingBranch--
-		}
-	case treeWriteLock:
-		n := nn[len(nn)-1]
-		n.writingSubtree = false
-		pp := nn
-		var p *node
-		for len(pp) > 0 {
-			p, pp = pp[len(pp)-1], pp[:len(pp)-1]
-			p.writingBranch--
+	var blockedBy []*item
+	for _, npn := range np[:len(np)-1] {
+		for _, npi := range npn.items {
+			if npi.typ == treeWriteLock ||
+				npi.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
+				blockedBy = append(blockedBy, npi)
+			}
 		}
 	}
 
-	l.cleanup(i.path)
+	if i.typ == treeReadLock || i.typ == treeWriteLock {
+		ln := getLockedNodes(n)
+		for _, lnn := range ln {
+			if lnn == n {
+				continue
+			}
+
+			for _, lni := range lnn.items {
+				if i.typ == treeWriteLock ||
+					lni.typ == treeWriteLock ||
+					lni.typ == writeLock {
+					blockedBy = append(blockedBy, lni)
+				}
+			}
+		}
+	}
+
+	for _, ni := range n.items {
+		if ni.typ == writeLock ||
+			ni.typ == treeWriteLock ||
+			i.typ == writeLock ||
+			i.typ == treeWriteLock {
+			blockedBy = append(blockedBy, ni)
+		}
+	}
+
+	i.blockedBy = blockedBy
+	for _, b := range blockedBy {
+		b.blocking = append(b.blocking, i)
+	}
+
+	n.items = append(n.items, i)
+	i.node = n
+	if len(i.blockedBy) == 0 {
+		l.notify = append(l.notify, i)
+	}
+}
+
+func removeItem(items []*item, item *item) []*item {
+	for i := range items {
+		if items[i] == item {
+			return append(items[:i], items[i+1:]...)
+		}
+	}
+
+	return items
+}
+
+func (l *Lock) doRelease(i *item) {
+	i.node.items = removeItem(i.node.items, i)
+	l.removeNode(i.path)
+	for _, b := range i.blocking {
+		b.blockedBy = removeItem(b.blockedBy, i)
+		if len(b.blockedBy) == 0 {
+			l.notify = append(l.notify, b)
+		}
+	}
+}
+
+func (l *Lock) notifyNext() (chan<- releaseLock, releaseLock) {
+	if len(l.notify) == 0 {
+		return nil, nil
+	}
+
+	item := l.notify[0]
+	l.notify = l.notify[1:]
+	release := func() {
+		select {
+		case l.release <- item:
+		case <-l.quit:
+		}
+	}
+
+	return item.notify, release
 }
 
 func (l *Lock) run() {
