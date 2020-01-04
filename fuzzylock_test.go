@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	fuzzyDuration    = time.Second
-	fuzzyConcurrency = 256
+	fuzzyDuration    = 30 * time.Second
+	fuzzyConcurrency = 2048
 )
 
 type counter chan int
@@ -116,18 +116,19 @@ func selectMethod(l *Lock) (func(...string) releaseLock, bool) {
 	return readMethods[i], false
 }
 
-func selectPath(paths [][]string) []string {
-	i := randomInt(intRange{0, len(paths)})
-	return paths[i]
+func selectPath(paths [][][]string) []string {
+	g := randomInt(intRange{0, len(paths)})
+	i := randomInt(intRange{0, len(paths[g])})
+	return paths[g][i]
 }
 
-func callTestAccess(t *testing.T, tree *testNode, l *Lock, paths [][]string) {
+func callTestAccess(t *testing.T, tree *testNode, l *Lock, paths [][][]string) {
 	method, write := selectMethod(l)
 	path := selectPath(paths)
 	testAccess(t, tree, method, path, write)
 }
 
-func testLoop(t *testing.T, timeout <-chan struct{}, tree *testNode, l *Lock, paths [][]string) {
+func testLoop(t *testing.T, timeout <-chan struct{}, tree *testNode, l *Lock, paths [][][]string) {
 	for {
 		select {
 		case <-timeout:
@@ -177,18 +178,40 @@ func getAllPaths(node *testNode) [][]string {
 	return paths
 }
 
+func groupPaths(paths [][]string) [][][]string {
+	groups := make(map[int][][]string)
+	for _, p := range paths {
+		groups[len(p)] = append(groups[len(p)], p)
+	}
+
+	gi := make(map[int]int)
+	var i int
+	for l := range groups {
+		gi[l] = i
+		i++
+	}
+
+	gpaths := make([][][]string, len(groups))
+	for l, i := range gi {
+		gpaths[i] = groups[l]
+	}
+
+	return gpaths
+}
+
 func TestLockFuzzy(t *testing.T) {
 	before := cnt.value()
 	l := New()
 	defer l.Close()
 	tree := buildTree()
 	paths := getAllPaths(tree)
+	gpaths := groupPaths(paths)
 	timeout := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < fuzzyConcurrency; i++ {
 		wg.Add(1)
 		go func() {
-			testLoop(t, timeout, tree, l, paths)
+			testLoop(t, timeout, tree, l, gpaths)
 			wg.Done()
 		}()
 	}

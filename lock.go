@@ -11,22 +11,9 @@ const (
 
 type releaseLock func()
 
-type item struct {
-	typ       lockType
-	path      []string
-	node      *node
-	blockedBy []*item
-	blocking  []*item
-	notify    chan releaseLock
-}
-
-type node struct {
-	children map[string]*node
-	items    []*item
-}
-
 type Lock struct {
 	root    *node
+	tree    *tree
 	notify  []*item
 	acquire chan *item
 	release chan *item
@@ -44,6 +31,7 @@ func newItem(t lockType, path []string) *item {
 func New() *Lock {
 	l := &Lock{
 		root:    &node{},
+		tree:    newTree(),
 		acquire: make(chan *item),
 		release: make(chan *item),
 		quit:    make(chan struct{}),
@@ -81,7 +69,7 @@ func (l *Lock) removeNode(path []string) {
 		}
 
 		n, p := np[len(np)-1], np[len(np)-2]
-		if len(n.items) > 0 {
+		if len(n.nodeItems) > 0 {
 			return
 		}
 
@@ -96,7 +84,7 @@ func (l *Lock) removeNode(path []string) {
 
 func getLockedNodes(n *node) []*node {
 	var ln []*node
-	if len(n.items) > 0 {
+	if len(n.nodeItems) > 0 {
 		ln = append(ln, n)
 	}
 
@@ -108,12 +96,55 @@ func getLockedNodes(n *node) []*node {
 }
 
 func (l *Lock) doAcquire(i *item) {
+	// println("/" + strings.Join(i.path, "/"))
+	np := l.tree.nodePath(i.path)
+	var blockedBy []*item
+	for _, npn := range np[:len(np)-1] {
+		npn.items.rangeOver(func(ni *item) {
+			if ni.typ == treeWriteLock ||
+				ni.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
+				blockedBy = append(blockedBy, ni)
+			}
+		})
+	}
+
+	if i.typ == treeReadLock || i.typ == treeWriteLock {
+		np[len(np)-1].childItems.rangeOver(func(ni *item) {
+			if i.typ == treeWriteLock ||
+				ni.typ == treeWriteLock ||
+				ni.typ == writeLock {
+				blockedBy = append(blockedBy, ni)
+			}
+		})
+	}
+
+	np[len(np)-1].items.rangeOver(func(ni *item) {
+		if ni.typ == writeLock ||
+			ni.typ == treeWriteLock ||
+			i.typ == writeLock ||
+			i.typ == treeWriteLock {
+			blockedBy = append(blockedBy, ni)
+		}
+	})
+
+	l.tree.addItem(i)
+	i.blockedBy = blockedBy
+	for _, b := range blockedBy {
+		b.blocking = append(b.blocking, i)
+	}
+
+	if len(i.blockedBy) == 0 {
+		l.notify = append(l.notify, i)
+	}
+}
+
+func (l *Lock) doAcquire1(i *item) {
 	np := l.getNodePath(i.path)
 	n := np[len(np)-1]
 
 	var blockedBy []*item
 	for _, npn := range np[:len(np)-1] {
-		for _, npi := range npn.items {
+		for _, npi := range npn.nodeItems {
 			if npi.typ == treeWriteLock ||
 				npi.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
 				blockedBy = append(blockedBy, npi)
@@ -128,7 +159,7 @@ func (l *Lock) doAcquire(i *item) {
 				continue
 			}
 
-			for _, lni := range lnn.items {
+			for _, lni := range lnn.nodeItems {
 				if i.typ == treeWriteLock ||
 					lni.typ == treeWriteLock ||
 					lni.typ == writeLock {
@@ -138,7 +169,7 @@ func (l *Lock) doAcquire(i *item) {
 		}
 	}
 
-	for _, ni := range n.items {
+	for _, ni := range n.nodeItems {
 		if ni.typ == writeLock ||
 			ni.typ == treeWriteLock ||
 			i.typ == writeLock ||
@@ -152,14 +183,14 @@ func (l *Lock) doAcquire(i *item) {
 		b.blocking = append(b.blocking, i)
 	}
 
-	n.items = append(n.items, i)
+	n.nodeItems = append(n.nodeItems, i)
 	i.node = n
 	if len(i.blockedBy) == 0 {
 		l.notify = append(l.notify, i)
 	}
 }
 
-func removeItem(items []*item, item *item) []*item {
+func removeNodeItem(items []*item, item *item) []*item {
 	for i := range items {
 		if items[i] == item {
 			return append(items[:i], items[i+1:]...)
@@ -170,10 +201,20 @@ func removeItem(items []*item, item *item) []*item {
 }
 
 func (l *Lock) doRelease(i *item) {
-	i.node.items = removeItem(i.node.items, i)
+	l.tree.removeItem(i)
+	for _, b := range i.blocking {
+		b.blockedBy = removeNodeItem(b.blockedBy, i)
+		if len(b.blockedBy) == 0 {
+			l.notify = append(l.notify, b)
+		}
+	}
+}
+
+func (l *Lock) doRelease1(i *item) {
+	i.node.nodeItems = removeNodeItem(i.node.nodeItems, i)
 	l.removeNode(i.path)
 	for _, b := range i.blocking {
-		b.blockedBy = removeItem(b.blockedBy, i)
+		b.blockedBy = removeNodeItem(b.blockedBy, i)
 		if len(b.blockedBy) == 0 {
 			l.notify = append(l.notify, b)
 		}
