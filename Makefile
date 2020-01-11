@@ -1,27 +1,27 @@
-GOSOURCE = $(shell find . -name "*.go")
+SOURCE = $(shell find . -name "*.go")
 
 default: build
 
-.PHONY: build
-build:
+build: $(SOURCE)
 	go build
 
-.PHONY: check
 check:
-	go test -count 1
+	go test -short
 
-.PHONY: .cover
-.cover:
-	go test -count 1 -coverprofile .cover
+checkfull:
+	go test -v -count 1
 
-.PHONY: showcover
+.cover: $(SOURCE)
+	go test -count 1 -coverprofile .cover -short
+
+cover: .cover
+	go tool cover -func .cover
+
 showcover: .cover
 	go tool cover -html .cover
 
-.PHONY: imports
 imports:
-	goimports -w $(GOSOURCE)
+	goimports -w $(SOURCE)
 
-.PHONY: fmt
 fmt:
-	gofmt -w -s $(GOSOURCE)
+	gofmt -w -s $(SOURCE)

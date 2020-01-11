@@ -12,9 +12,8 @@ const (
 type releaseLock func()
 
 type Lock struct {
-	root    *node
 	tree    *tree
-	notify  []*item
+	notify  list
 	acquire chan *item
 	release chan *item
 	quit    chan struct{}
@@ -30,7 +29,6 @@ func newItem(t lockType, path []string) *item {
 
 func New() *Lock {
 	l := &Lock{
-		root:    &node{},
 		tree:    newTree(),
 		acquire: make(chan *item),
 		release: make(chan *item),
@@ -41,193 +39,88 @@ func New() *Lock {
 	return l
 }
 
-func (l *Lock) getNodePath(path []string) []*node {
-	np := []*node{l.root}
-	for len(path) > 0 {
-		n, ok := np[len(np)-1].children[path[0]]
-		if !ok {
-			if np[len(np)-1].children == nil {
-				np[len(np)-1].children = make(map[string]*node)
-			}
-
-			n = &node{}
-			np[len(np)-1].children[path[0]] = n
-		}
-
-		np = append(np, n)
-		path = path[1:]
-	}
-
-	return np
-}
-
-func (l *Lock) removeNode(path []string) {
-	np := l.getNodePath(path)
-	for {
-		if len(np) == 1 {
-			return
-		}
-
-		n, p := np[len(np)-1], np[len(np)-2]
-		if len(n.nodeItems) > 0 {
-			return
-		}
-
-		if len(n.children) > 0 {
-			return
-		}
-
-		delete(p.children, path[len(path)-1])
-		np, path = np[:len(np)-1], path[:len(path)-1]
-	}
-}
-
-func getLockedNodes(n *node) []*node {
-	var ln []*node
-	if len(n.nodeItems) > 0 {
-		ln = append(ln, n)
-	}
-
-	for _, c := range n.children {
-		ln = append(ln, getLockedNodes(c)...)
-	}
-
-	return ln
-}
-
 func (l *Lock) doAcquire(i *item) {
-	// println("/" + strings.Join(i.path, "/"))
 	np := l.tree.nodePath(i.path)
 	var blockedBy []*item
 	for _, npn := range np[:len(np)-1] {
-		npn.items.rangeOver(func(ni *item) {
-			if ni.typ == treeWriteLock ||
-				ni.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
-				blockedBy = append(blockedBy, ni)
+		npn.items.rangeOver(func(ne *element) {
+			if ne.item.typ == treeWriteLock ||
+				ne.item.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
+				blockedBy = append(blockedBy, ne.item)
 			}
 		})
 	}
 
 	if i.typ == treeReadLock || i.typ == treeWriteLock {
-		np[len(np)-1].childItems.rangeOver(func(ni *item) {
+		np[len(np)-1].subtreeItems.rangeOver(func(ne *element) {
 			if i.typ == treeWriteLock ||
-				ni.typ == treeWriteLock ||
-				ni.typ == writeLock {
-				blockedBy = append(blockedBy, ni)
+				ne.item.typ == treeWriteLock ||
+				ne.item.typ == writeLock {
+				blockedBy = append(blockedBy, ne.item)
 			}
 		})
 	}
 
-	np[len(np)-1].items.rangeOver(func(ni *item) {
-		if ni.typ == writeLock ||
-			ni.typ == treeWriteLock ||
+	np[len(np)-1].items.rangeOver(func(ne *element) {
+		if ne.item.typ == writeLock ||
+			ne.item.typ == treeWriteLock ||
 			i.typ == writeLock ||
 			i.typ == treeWriteLock {
-			blockedBy = append(blockedBy, ni)
+			blockedBy = append(blockedBy, ne.item)
 		}
 	})
 
-	l.tree.addItem(i)
-	i.blockedBy = blockedBy
+	e := &element{item: i}
+	i.element = e
+	l.tree.addElement(e)
+	i.blockedBy = len(blockedBy)
 	for _, b := range blockedBy {
 		b.blocking = append(b.blocking, i)
 	}
 
-	if len(i.blockedBy) == 0 {
-		l.notify = append(l.notify, i)
-	}
-}
-
-func (l *Lock) doAcquire1(i *item) {
-	np := l.getNodePath(i.path)
-	n := np[len(np)-1]
-
-	var blockedBy []*item
-	for _, npn := range np[:len(np)-1] {
-		for _, npi := range npn.nodeItems {
-			if npi.typ == treeWriteLock ||
-				npi.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
-				blockedBy = append(blockedBy, npi)
-			}
+	if i.blockedBy == 0 {
+		ne := &element{item: i}
+		if l.notify.empty() {
+			l.notify.first, l.notify.last = ne, ne
+		} else {
+			ne.prev = l.notify.last
+			l.notify.last.next = ne
+			l.notify.last = ne
 		}
 	}
-
-	if i.typ == treeReadLock || i.typ == treeWriteLock {
-		ln := getLockedNodes(n)
-		for _, lnn := range ln {
-			if lnn == n {
-				continue
-			}
-
-			for _, lni := range lnn.nodeItems {
-				if i.typ == treeWriteLock ||
-					lni.typ == treeWriteLock ||
-					lni.typ == writeLock {
-					blockedBy = append(blockedBy, lni)
-				}
-			}
-		}
-	}
-
-	for _, ni := range n.nodeItems {
-		if ni.typ == writeLock ||
-			ni.typ == treeWriteLock ||
-			i.typ == writeLock ||
-			i.typ == treeWriteLock {
-			blockedBy = append(blockedBy, ni)
-		}
-	}
-
-	i.blockedBy = blockedBy
-	for _, b := range blockedBy {
-		b.blocking = append(b.blocking, i)
-	}
-
-	n.nodeItems = append(n.nodeItems, i)
-	i.node = n
-	if len(i.blockedBy) == 0 {
-		l.notify = append(l.notify, i)
-	}
-}
-
-func removeNodeItem(items []*item, item *item) []*item {
-	for i := range items {
-		if items[i] == item {
-			return append(items[:i], items[i+1:]...)
-		}
-	}
-
-	return items
 }
 
 func (l *Lock) doRelease(i *item) {
-	l.tree.removeItem(i)
+	l.tree.removeElement(i.element)
 	for _, b := range i.blocking {
-		b.blockedBy = removeNodeItem(b.blockedBy, i)
-		if len(b.blockedBy) == 0 {
-			l.notify = append(l.notify, b)
-		}
-	}
-}
-
-func (l *Lock) doRelease1(i *item) {
-	i.node.nodeItems = removeNodeItem(i.node.nodeItems, i)
-	l.removeNode(i.path)
-	for _, b := range i.blocking {
-		b.blockedBy = removeNodeItem(b.blockedBy, i)
-		if len(b.blockedBy) == 0 {
-			l.notify = append(l.notify, b)
+		b.blockedBy--
+		if b.blockedBy == 0 {
+			ne := &element{item: b}
+			if l.notify.first == nil {
+				l.notify.first, l.notify.last = ne, ne
+			} else {
+				ne.prev = l.notify.last
+				l.notify.last.next = ne
+				l.notify.last = ne
+			}
 		}
 	}
 }
 
 func (l *Lock) notifyNext() (chan<- releaseLock, releaseLock) {
-	if len(l.notify) == 0 {
+	if l.notify.first == nil {
 		return nil, nil
 	}
 
-	item := l.notify[0]
-	l.notify = l.notify[1:]
+	first := l.notify.first
+	l.notify.first = first.next
+	if l.notify.first == nil {
+		l.notify.last = nil
+	} else {
+		l.notify.first.prev = nil
+	}
+
+	item := first.item
 	release := func() {
 		select {
 		case l.release <- item:

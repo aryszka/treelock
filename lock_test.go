@@ -98,6 +98,54 @@ func TestLockRead(t *testing.T) {
 		r2()
 		r1()
 	})
+
+	t.Run("has child and siblings", func(t *testing.T) {
+		l := New()
+		defer l.Close()
+		r1 := l.ReadNode("a")
+		r2 := l.ReadNode("b", "a")
+		r3 := l.ReadNode("c")
+		r4 := l.ReadNode("b")
+		r4()
+		r3()
+		r2()
+		r1()
+	})
+
+	t.Run("has lock and siblings", func(t *testing.T) {
+		l := New()
+		defer l.Close()
+		r1 := l.ReadNode("a")
+		r2 := l.ReadNode("b")
+		r3 := l.ReadNode("c")
+		r4 := l.ReadNode("b")
+		r4()
+		r3()
+		r2()
+		r1()
+	})
+
+	t.Run("parent has item and sibling", func(t *testing.T) {
+		l := New()
+		defer l.Close()
+		r1 := l.ReadNode("a")
+		r2 := l.ReadNode("b")
+		r3 := l.ReadNode("a", "a")
+		r3()
+		r2()
+		r1()
+	})
+
+	t.Run("parent has children and sibling", func(t *testing.T) {
+		l := New()
+		defer l.Close()
+		r1 := l.ReadNode("a", "a")
+		r2 := l.ReadNode("b")
+		r3 := l.ReadNode("a", "b")
+		r3()
+		r2()
+		r1()
+	})
 }
 
 func TestLockWrite(t *testing.T) {

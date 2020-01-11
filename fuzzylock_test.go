@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	fuzzyDuration    = 30 * time.Second
-	fuzzyConcurrency = 2048
+	fuzzyDuration      = 3 * time.Second
+	shortFuzzyDuration = time.Second
+	fuzzyConcurrency   = 2048
 )
 
 type counter chan int
@@ -199,7 +200,7 @@ func groupPaths(paths [][]string) [][][]string {
 	return gpaths
 }
 
-func TestLockFuzzy(t *testing.T) {
+func testLockFuzzy(t *testing.T, d time.Duration) {
 	before := cnt.value()
 	l := New()
 	defer l.Close()
@@ -218,10 +219,10 @@ func TestLockFuzzy(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		<-time.After(fuzzyDuration)
+		<-time.After(d)
 		close(timeout)
 		select {
-		case <-time.After(3 * fuzzyDuration):
+		case <-time.After(3 * d):
 			panic("fuzzy test did not complete")
 		case <-done:
 		}
@@ -230,4 +231,20 @@ func TestLockFuzzy(t *testing.T) {
 	wg.Wait()
 	close(done)
 	t.Log("access", cnt.value()-before)
+}
+
+func TestLockFuzzy(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+
+	testLockFuzzy(t, fuzzyDuration)
+}
+
+func TestLockFuzzyShort(t *testing.T) {
+	if testing.CoverMode() != "" || !testing.Short() {
+		t.Skip()
+	}
+
+	testLockFuzzy(t, shortFuzzyDuration)
 }
