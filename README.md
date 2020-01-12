@@ -1,7 +1,7 @@
 # Treelock
 
 [![Build](https://github.com/aryszka/treelock/workflows/Build/badge.svg)](https://github.com/aryszka/treelock/workflows/Build/badge.svg)
-[![Go Report](https://goreportcard.com/badge/github.com/OktaSecurityLabs/sgt)](https://goreportcard.com/badge/github.com/OktaSecurityLabs/sgt)
+[![Go Report](https://goreportcard.com/badge/github.com/aryszka/treelock)](https://goreportcard.com/badge/github.com/aryszka/treelock)
 
 Locking mechanism for tree structures.
 
