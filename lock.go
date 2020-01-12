@@ -68,12 +68,10 @@ func blockedByOnSubtree(o *operation, n *node) []*operation {
 	return ops
 }
 
-func doAcquire(root *node, o *operation) {
-	np := nodePath(root, o.path)
-	n, pp := np[len(np)-1], np[:len(np)-1]
-
+func initBlocking(nodePath []*node, o *operation) {
 	var blockedBy []*operation
-	blockedBy = append(blockedBy, blockedByOnPath(o, pp)...)
+	n, np := nodePath[len(nodePath)-1], nodePath[:len(nodePath)-1]
+	blockedBy = append(blockedBy, blockedByOnPath(o, np)...)
 	blockedBy = append(blockedBy, blockedByOnNode(o, n)...)
 	if o.typ == treeReadLock || o.typ == treeWriteLock {
 		blockedBy = append(blockedBy, blockedByOnSubtree(o, n)...)
@@ -83,8 +81,6 @@ func doAcquire(root *node, o *operation) {
 	for _, b := range blockedBy {
 		b.blocking = append(b.blocking, o)
 	}
-
-	insert(np, o)
 }
 
 func (l *L) acquire(typ lockType, path []string) func() {
@@ -98,7 +94,9 @@ func (l *L) acquire(typ lockType, path []string) func() {
 		l.tree = &node{}
 	}
 
-	doAcquire(l.tree, o)
+	np := nodePath(l.tree, o.path)
+	initBlocking(np, o)
+	insert(np, o)
 	l.mx.Unlock()
 	o.blockedBy.Wait()
 	return func() {
