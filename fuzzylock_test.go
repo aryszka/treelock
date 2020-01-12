@@ -29,13 +29,13 @@ type testNode struct {
 }
 
 type locker interface {
-	ReadNode(...string) releaseLock
-	WriteNode(...string) releaseLock
-	ReadTree(...string) releaseLock
-	WriteTree(...string) releaseLock
+	ReadNode(...string) func()
+	WriteNode(...string) func()
+	ReadTree(...string) func()
+	WriteTree(...string) func()
 }
 
-type testReadLock struct {
+type testLock struct {
 	mx *sync.RWMutex
 }
 
@@ -85,25 +85,25 @@ func (n *testNode) get(path ...string) *testNode {
 	return n.get(path[1:]...)
 }
 
-func (l *testReadLock) ReadNode(...string) releaseLock {
+func (l *testLock) ReadNode(...string) func() {
 	l.mx.RLock()
 	return func() { l.mx.RUnlock() }
 }
 
-func (l *testReadLock) WriteNode(...string) releaseLock {
+func (l *testLock) WriteNode(...string) func() {
 	l.mx.Lock()
 	return func() { l.mx.Unlock() }
 }
 
-func (l *testReadLock) ReadTree(...string) releaseLock {
+func (l *testLock) ReadTree(...string) func() {
 	return l.ReadNode()
 }
 
-func (l *testReadLock) WriteTree(...string) releaseLock {
+func (l *testLock) WriteTree(...string) func() {
 	return l.WriteNode()
 }
 
-func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) releaseLock, path []string, write bool) {
+func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) func(), path []string, write bool) {
 	defer lockMethod(path...)()
 	n := tree.get(path...)
 	if n.writing {
@@ -126,13 +126,13 @@ func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) release
 	cnt.inc()
 }
 
-func selectMethod(l locker) (func(...string) releaseLock, bool) {
-	readMethods := []func(...string) releaseLock{
+func selectMethod(l locker) (func(...string) func(), bool) {
+	readMethods := []func(...string) func(){
 		l.ReadNode,
 		l.ReadTree,
 	}
 
-	writeMethods := []func(...string) releaseLock{
+	writeMethods := []func(...string) func(){
 		l.WriteNode,
 		l.WriteTree,
 	}
@@ -232,7 +232,7 @@ func groupPaths(paths [][]string) [][][]string {
 func testLockFuzzy(t *testing.T, d time.Duration) {
 	before := cnt.value()
 	l := New()
-	// l := &testReadLock{mx: &sync.RWMutex{}}
+	// l := &testLock{mx: &sync.RWMutex{}}
 	tree := buildTree()
 	paths := getAllPaths(tree)
 	gpaths := groupPaths(paths)

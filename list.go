@@ -1,80 +1,80 @@
 package treelock
 
-type element struct {
-	item       *item
-	prev, next *element
+type item struct {
+	operation  *operation
+	prev, next *item
 }
 
 type list struct {
-	first, last *element
+	first, last *item
 }
 
 func (l list) empty() bool {
 	return l.first == nil
 }
 
-func (l list) rangeOver(f func(*item)) {
+func (l list) rangeOver(f func(*operation)) {
 	if l.first == nil {
 		return
 	}
 
-	e := l.first
+	i := l.first
 	for {
-		f(e.item)
-		if e == l.last {
+		f(i.operation)
+		if i == l.last {
 			return
 		}
 
-		e = e.next
+		i = i.next
 	}
 }
 
-func (l list) insert(e *element) list {
+func (l list) insert(i *item) list {
 	if l.empty() {
-		l.first, l.last = e, e
+		l.first, l.last = i, i
 		return l
 	}
 
-	if l.first == e.next {
-		l.first = e
+	if l.first == i.next {
+		l.first = i
 		return l
 	}
 
-	if l.last == e.prev {
-		l.last = e
+	if l.last == i.prev {
+		l.last = i
 		return l
 	}
 
-	if e.prev != nil {
+	if i.prev != nil {
 		return l
 	}
 
 	if l.last.next != nil {
-		e.next = l.last.next
-		l.last.next.prev = e
+		i.next = l.last.next
+		l.last.next.prev = i
 	}
 
-	l.last.next = e
-	e.prev = l.last
-	l.last = e
+	l.last.next = i
+	i.prev = l.last
+	l.last = i
 	return l
 }
 
-func (l list) remove(e *element) list {
-	if e.prev != nil {
-		e.prev.next = e.next
+func (l list) remove(i *item) list {
+	if i.prev != nil {
+		i.prev.next = i.next
 	}
 
-	if e.next != nil {
-		e.next.prev = e.prev
+	if i.next != nil {
+		i.next.prev = i.prev
 	}
 
-	if l.first == e && l.last == e {
+	if l.first == i && l.last == i {
 		l.first, l.last = nil, nil
-	} else if l.first == e {
-		l.first = e.next
-	} else if l.last == e {
-		l.last = e.prev
+	} else if l.first == i {
+		l.first = i.next
+	} else if l.last == i {
+		l.last = i.prev
 	}
 
 	return l

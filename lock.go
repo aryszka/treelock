@@ -11,14 +11,12 @@ const (
 	treeWriteLock
 )
 
-type releaseLock func()
-
-type item struct {
+type operation struct {
 	typ       lockType
 	path      []string
-	element   *element
+	item      *item
 	blockedBy *sync.WaitGroup
-	blocking  []*item
+	blocking  []*operation
 }
 
 type Lock struct {
@@ -26,8 +24,8 @@ type Lock struct {
 	mx   *sync.Mutex
 }
 
-func newItem(t lockType, path []string) *item {
-	return &item{
+func newOperation(t lockType, path []string) *operation {
+	return &operation{
 		typ:       t,
 		path:      path,
 		blockedBy: &sync.WaitGroup{},
@@ -41,66 +39,66 @@ func New() *Lock {
 	}
 }
 
-func (l *Lock) doAcquire(i *item) {
+func (l *Lock) doAcquire(o *operation) {
 	l.mx.Lock()
 	defer l.mx.Unlock()
-	np := l.tree.nodePath(i.path)
-	var blockedBy []*item
+	np := l.tree.nodePath(o.path)
+	var blockedBy []*operation
 	for _, npn := range np[:len(np)-1] {
-		npn.items.rangeOver(func(ni *item) {
-			if ni.typ == treeWriteLock ||
-				ni.typ == treeReadLock &&
-					(i.typ == treeWriteLock || i.typ == writeLock) {
-				blockedBy = append(blockedBy, ni)
+		npn.operations.rangeOver(func(no *operation) {
+			if no.typ == treeWriteLock ||
+				no.typ == treeReadLock &&
+					(o.typ == treeWriteLock || o.typ == writeLock) {
+				blockedBy = append(blockedBy, no)
 			}
 		})
 	}
 
-	np[len(np)-1].items.rangeOver(func(ni *item) {
-		if ni.typ == writeLock ||
-			ni.typ == treeWriteLock ||
-			i.typ == writeLock ||
-			i.typ == treeWriteLock {
-			blockedBy = append(blockedBy, ni)
+	np[len(np)-1].operations.rangeOver(func(no *operation) {
+		if no.typ == writeLock ||
+			no.typ == treeWriteLock ||
+			o.typ == writeLock ||
+			o.typ == treeWriteLock {
+			blockedBy = append(blockedBy, no)
 		}
 	})
 
-	if i.typ == treeReadLock || i.typ == treeWriteLock {
-		np[len(np)-1].subtreeItems.rangeOver(func(ni *item) {
-			if i.typ == treeWriteLock ||
-				ni.typ == treeWriteLock ||
-				ni.typ == writeLock {
-				blockedBy = append(blockedBy, ni)
+	if o.typ == treeReadLock || o.typ == treeWriteLock {
+		np[len(np)-1].subtreeOperations.rangeOver(func(no *operation) {
+			if o.typ == treeWriteLock ||
+				no.typ == treeWriteLock ||
+				no.typ == writeLock {
+				blockedBy = append(blockedBy, no)
 			}
 		})
 	}
 
-	l.tree.insert(np, i)
-	i.blockedBy.Add(len(blockedBy))
+	l.tree.insert(np, o)
+	o.blockedBy.Add(len(blockedBy))
 	for _, b := range blockedBy {
-		b.blocking = append(b.blocking, i)
+		b.blocking = append(b.blocking, o)
 	}
 }
 
-func (l *Lock) doRelease(i *item) {
+func (l *Lock) release(o *operation) {
 	l.mx.Lock()
 	defer l.mx.Unlock()
-	l.tree.remove(i)
-	for _, b := range i.blocking {
+	l.tree.remove(o)
+	for _, b := range o.blocking {
 		b.blockedBy.Done()
 	}
 }
 
-func (l *Lock) requestLock(typ lockType, path []string) releaseLock {
-	i := newItem(typ, path)
-	l.doAcquire(i)
-	i.blockedBy.Wait()
+func (l *Lock) acquire(typ lockType, path []string) func() {
+	o := newOperation(typ, path)
+	l.doAcquire(o)
+	o.blockedBy.Wait()
 	return func() {
-		l.doRelease(i)
+		l.release(o)
 	}
 }
 
-func (l *Lock) ReadNode(path ...string) releaseLock  { return l.requestLock(readLock, path) }
-func (l *Lock) WriteNode(path ...string) releaseLock { return l.requestLock(writeLock, path) }
-func (l *Lock) ReadTree(path ...string) releaseLock  { return l.requestLock(treeReadLock, path) }
-func (l *Lock) WriteTree(path ...string) releaseLock { return l.requestLock(treeWriteLock, path) }
+func (l *Lock) ReadNode(path ...string) func()  { return l.acquire(readLock, path) }
+func (l *Lock) WriteNode(path ...string) func() { return l.acquire(writeLock, path) }
+func (l *Lock) ReadTree(path ...string) func()  { return l.acquire(treeReadLock, path) }
+func (l *Lock) WriteTree(path ...string) func() { return l.acquire(treeWriteLock, path) }

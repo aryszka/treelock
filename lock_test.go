@@ -7,7 +7,7 @@ import (
 
 const minDelay = 9 * time.Millisecond
 
-func testLocked(t *testing.T, l *Lock, release releaseLock, method func(...string) releaseLock, path ...string) {
+func testLocked(t *testing.T, l *Lock, release func(), method func(...string) func(), path ...string) {
 	released := make(chan struct{})
 	access := func() <-chan struct{} {
 		done := make(chan struct{})
