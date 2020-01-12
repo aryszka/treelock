@@ -13,14 +13,14 @@ func (l list) empty() bool {
 	return l.first == nil
 }
 
-func (l list) rangeOver(f func(*element)) {
+func (l list) rangeOver(f func(*item)) {
 	if l.first == nil {
 		return
 	}
 
 	e := l.first
 	for {
-		f(e)
+		f(e.item)
 		if e == l.last {
 			return
 		}

@@ -11,6 +11,15 @@ const (
 
 type releaseLock func()
 
+type item struct {
+	typ       lockType
+	path      []string
+	notify    chan releaseLock
+	element   *element
+	blockedBy int
+	blocking  []*item
+}
+
 type Lock struct {
 	tree    *tree
 	notify  list
@@ -43,36 +52,35 @@ func (l *Lock) doAcquire(i *item) {
 	np := l.tree.nodePath(i.path)
 	var blockedBy []*item
 	for _, npn := range np[:len(np)-1] {
-		npn.items.rangeOver(func(ne *element) {
-			if ne.item.typ == treeWriteLock ||
-				ne.item.typ == treeReadLock && (i.typ == treeWriteLock || i.typ == writeLock) {
-				blockedBy = append(blockedBy, ne.item)
+		npn.items.rangeOver(func(ni *item) {
+			if ni.typ == treeWriteLock ||
+				ni.typ == treeReadLock &&
+					(i.typ == treeWriteLock || i.typ == writeLock) {
+				blockedBy = append(blockedBy, ni)
 			}
 		})
 	}
 
-	if i.typ == treeReadLock || i.typ == treeWriteLock {
-		np[len(np)-1].subtreeItems.rangeOver(func(ne *element) {
-			if i.typ == treeWriteLock ||
-				ne.item.typ == treeWriteLock ||
-				ne.item.typ == writeLock {
-				blockedBy = append(blockedBy, ne.item)
-			}
-		})
-	}
-
-	np[len(np)-1].items.rangeOver(func(ne *element) {
-		if ne.item.typ == writeLock ||
-			ne.item.typ == treeWriteLock ||
+	np[len(np)-1].items.rangeOver(func(ni *item) {
+		if ni.typ == writeLock ||
+			ni.typ == treeWriteLock ||
 			i.typ == writeLock ||
 			i.typ == treeWriteLock {
-			blockedBy = append(blockedBy, ne.item)
+			blockedBy = append(blockedBy, ni)
 		}
 	})
 
-	e := &element{item: i}
-	i.element = e
-	l.tree.addElement(e)
+	if i.typ == treeReadLock || i.typ == treeWriteLock {
+		np[len(np)-1].subtreeItems.rangeOver(func(ni *item) {
+			if i.typ == treeWriteLock ||
+				ni.typ == treeWriteLock ||
+				ni.typ == writeLock {
+				blockedBy = append(blockedBy, ni)
+			}
+		})
+	}
+
+	l.tree.insert(i)
 	i.blockedBy = len(blockedBy)
 	for _, b := range blockedBy {
 		b.blocking = append(b.blocking, i)
@@ -84,7 +92,7 @@ func (l *Lock) doAcquire(i *item) {
 }
 
 func (l *Lock) doRelease(i *item) {
-	l.tree.removeElement(i.element)
+	l.tree.remove(i)
 	for _, b := range i.blocking {
 		b.blockedBy--
 		if b.blockedBy == 0 {

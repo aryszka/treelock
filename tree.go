@@ -1,14 +1,5 @@
 package treelock
 
-type item struct {
-	typ       lockType
-	path      []string
-	notify    chan releaseLock
-	element   *element
-	blockedBy int
-	blocking  []*item
-}
-
 type node struct {
 	items        list
 	subtreeItems list
@@ -25,145 +16,45 @@ func newTree() *tree {
 
 func (t *tree) nodePath(path []string) []*node {
 	np := []*node{t.root}
-	for len(path) > 0 {
-		n, ok := np[len(np)-1].children[path[0]]
+	for _, p := range path {
+		n, ok := np[len(np)-1].children[p]
 		if !ok {
 			if np[len(np)-1].children == nil {
 				np[len(np)-1].children = make(map[string]*node)
 			}
 
 			n = &node{}
-			np[len(np)-1].children[path[0]] = n
+			np[len(np)-1].children[p] = n
 		}
 
 		np = append(np, n)
-		path = path[1:]
 	}
 
 	return np
 }
 
-func (t *tree) addElement(e *element) {
-	var (
-		np []*node
-		n  *node
-	)
-
-	np = t.nodePath(e.item.path)
-	n, np = np[len(np)-1], np[:len(np)-1]
-	if n.items.empty() {
-		n.items = n.items.insert(e)
+func (t *tree) insert(i *item) {
+	i.element = &element{item: i}
+	np := t.nodePath(i.path)
+	n, np := np[len(np)-1], np[:len(np)-1]
+	n.items = n.items.insert(i.element)
+	connect(n.items, n.subtreeItems)
+	for j := len(np) - 1; j >= 0; j-- {
+		n = np[j]
+		n.subtreeItems = n.subtreeItems.insert(i.element)
 		connect(n.items, n.subtreeItems)
-
-		/*
-			n.items.first, n.items.last = e, e
-			if !n.subtreeItems.empty() {
-				if n.subtreeItems.first.prev != nil {
-					n.subtreeItems.first.prev.next = e
-					e.prev = n.subtreeItems.first.prev
-				}
-
-				e.next = n.subtreeItems.first
-				n.subtreeItems.first.prev = e
-			}
-		*/
-	} else {
-		n.items = n.items.insert(e)
-		connect(n.items, n.subtreeItems)
-
-		/*
-			if n.subtreeItems.empty() {
-				if n.items.last.next != nil {
-					n.items.last.next.prev = e
-					e.next = n.items.last.next
-				}
-			} else {
-				n.subtreeItems.first.prev = e
-				e.next = n.subtreeItems.first
-			}
-
-			n.items.last.next = e
-			e.prev = n.items.last
-			n.items.last = e
-		*/
-	}
-
-	for {
-		if len(np) == 0 {
-			break
-		}
-
-		n, np = np[len(np)-1], np[:len(np)-1]
-		n.subtreeItems = n.subtreeItems.insert(e)
-		connect(n.items, n.subtreeItems)
-
-		/*
-			if n.subtreeItems.empty() {
-				n.subtreeItems.first, n.subtreeItems.last = e, e
-				if !n.items.empty() {
-					if n.items.last.next != nil {
-						n.items.last.next.prev = e
-						e.next = n.items.last.next
-					}
-
-					n.items.last.next = e
-					e.prev = n.items.last
-				}
-
-				continue
-			}
-
-			if n.subtreeItems.first == e.next {
-				n.subtreeItems.first = e
-				continue
-			}
-
-			if n.subtreeItems.last == e.prev {
-				n.subtreeItems.last = e
-				continue
-			}
-
-			if e.next == nil && e.prev == nil {
-				if n.subtreeItems.last.next != nil {
-					n.subtreeItems.last.next.prev = e
-					e.next = n.subtreeItems.last.next
-				}
-
-				n.subtreeItems.last.next = e
-				e.prev = n.subtreeItems.last
-				n.subtreeItems.last = e
-				continue
-			}
-
-			break
-		*/
 	}
 }
 
-func (t *tree) removeElement(e *element) {
-	var (
-		np []*node
-		n  *node
-		p  []string
-	)
-
-	np = t.nodePath(e.item.path)
-	n = np[len(np)-1]
-	n.items = n.items.remove(e)
-	p = e.item.path
-	for {
-		if len(np) == 0 {
-			break
-		}
-
-		n, np = np[len(np)-1], np[:len(np)-1]
-		n.subtreeItems = n.subtreeItems.remove(e)
-		if len(np) > 0 && n.items.empty() && n.subtreeItems.empty() {
-			delete(np[len(np)-1].children, p[len(p)-1])
-		}
-
-		if len(p) > 0 {
-			p = p[:len(p)-1]
+func (t *tree) remove(i *item) {
+	np := t.nodePath(i.path)
+	n := np[len(np)-1]
+	n.items = n.items.remove(i.element)
+	for j := len(np) - 1; j >= 0; j-- {
+		n = np[j]
+		n.subtreeItems = n.subtreeItems.remove(i.element)
+		if j > 0 && n.items.empty() && n.subtreeItems.empty() {
+			delete(np[j-1].children, i.path[j-1])
 		}
 	}
 }
