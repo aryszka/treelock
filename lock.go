@@ -26,7 +26,7 @@ type L struct {
 	mx   sync.Mutex
 }
 
-func blockingOperationsOnPath(o *operation, nodePath []*node) []*operation {
+func blockedByOnPath(o *operation, nodePath []*node) []*operation {
 	var ops []*operation
 	for _, n := range nodePath {
 		rangeOver(n.operations, func(no *operation) {
@@ -41,7 +41,7 @@ func blockingOperationsOnPath(o *operation, nodePath []*node) []*operation {
 	return ops
 }
 
-func blockingOperationsOnNode(o *operation, n *node) []*operation {
+func blockedByOnNode(o *operation, n *node) []*operation {
 	var ops []*operation
 	rangeOver(n.operations, func(no *operation) {
 		if no.typ == writeLock ||
@@ -55,7 +55,7 @@ func blockingOperationsOnNode(o *operation, n *node) []*operation {
 	return ops
 }
 
-func blockingOperationsOnSubtree(o *operation, n *node) []*operation {
+func blockedByOnSubtree(o *operation, n *node) []*operation {
 	var ops []*operation
 	rangeOver(n.subtreeOperations, func(no *operation) {
 		if o.typ == treeWriteLock ||
@@ -68,20 +68,15 @@ func blockingOperationsOnSubtree(o *operation, n *node) []*operation {
 	return ops
 }
 
-func (l *L) doAcquire(o *operation) {
-	l.mx.Lock()
-	defer l.mx.Unlock()
-	if l.tree == nil {
-		l.tree = &node{}
-	}
+func doAcquire(root *node, o *operation) {
+	np := nodePath(root, o.path)
+	n, pp := np[len(np)-1], np[:len(np)-1]
 
 	var blockedBy []*operation
-	np := nodePath(l.tree, o.path)
-	n, pp := np[len(np)-1], np[:len(np)-1]
-	blockedBy = append(blockedBy, blockingOperationsOnPath(o, pp)...)
-	blockedBy = append(blockedBy, blockingOperationsOnNode(o, n)...)
+	blockedBy = append(blockedBy, blockedByOnPath(o, pp)...)
+	blockedBy = append(blockedBy, blockedByOnNode(o, n)...)
 	if o.typ == treeReadLock || o.typ == treeWriteLock {
-		blockedBy = append(blockedBy, blockingOperationsOnSubtree(o, n)...)
+		blockedBy = append(blockedBy, blockedByOnSubtree(o, n)...)
 	}
 
 	o.blockedBy.Add(len(blockedBy))
@@ -92,6 +87,25 @@ func (l *L) doAcquire(o *operation) {
 	insert(np, o)
 }
 
+func (l *L) acquire(typ lockType, path []string) func() {
+	o := &operation{
+		typ:  typ,
+		path: path,
+	}
+
+	l.mx.Lock()
+	if l.tree == nil {
+		l.tree = &node{}
+	}
+
+	doAcquire(l.tree, o)
+	l.mx.Unlock()
+	o.blockedBy.Wait()
+	return func() {
+		l.release(o)
+	}
+}
+
 func (l *L) release(o *operation) {
 	l.mx.Lock()
 	defer l.mx.Unlock()
@@ -99,19 +113,6 @@ func (l *L) release(o *operation) {
 	remove(np, o)
 	for _, b := range o.blocking {
 		b.blockedBy.Done()
-	}
-}
-
-func (l *L) acquire(typ lockType, path []string) func() {
-	o := &operation{
-		typ:  typ,
-		path: path,
-	}
-
-	l.doAcquire(o)
-	o.blockedBy.Wait()
-	return func() {
-		l.release(o)
 	}
 }
 
