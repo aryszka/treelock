@@ -79,14 +79,7 @@ func (l *Lock) doAcquire(i *item) {
 	}
 
 	if i.blockedBy == 0 {
-		ne := &element{item: i}
-		if l.notify.empty() {
-			l.notify.first, l.notify.last = ne, ne
-		} else {
-			ne.prev = l.notify.last
-			l.notify.last.next = ne
-			l.notify.last = ne
-		}
+		l.notify = l.notify.insert(&element{item: i})
 	}
 }
 
@@ -95,14 +88,7 @@ func (l *Lock) doRelease(i *item) {
 	for _, b := range i.blocking {
 		b.blockedBy--
 		if b.blockedBy == 0 {
-			ne := &element{item: b}
-			if l.notify.first == nil {
-				l.notify.first, l.notify.last = ne, ne
-			} else {
-				ne.prev = l.notify.last
-				l.notify.last.next = ne
-				l.notify.last = ne
-			}
+			l.notify = l.notify.insert(&element{item: b})
 		}
 	}
 }
@@ -113,13 +99,7 @@ func (l *Lock) notifyNext() (chan<- releaseLock, releaseLock) {
 	}
 
 	first := l.notify.first
-	l.notify.first = first.next
-	if l.notify.first == nil {
-		l.notify.last = nil
-	} else {
-		l.notify.first.prev = nil
-	}
-
+	l.notify = l.notify.remove(first)
 	item := first.item
 	release := func() {
 		select {

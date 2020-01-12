@@ -28,6 +28,17 @@ type testNode struct {
 	writing  bool
 }
 
+type locker interface {
+	ReadNode(...string) releaseLock
+	WriteNode(...string) releaseLock
+	ReadTree(...string) releaseLock
+	WriteTree(...string) releaseLock
+}
+
+type testReadLock struct {
+	mx *sync.RWMutex
+}
+
 var (
 	busyDuration    = timeRange{300 * time.Microsecond, 1200 * time.Microsecond}
 	fuzzyTreeLevels = 6
@@ -74,6 +85,24 @@ func (n *testNode) get(path ...string) *testNode {
 	return n.get(path[1:]...)
 }
 
+func (l *testReadLock) ReadNode(...string) releaseLock {
+	l.mx.RLock()
+	return func() { l.mx.RUnlock() }
+}
+
+func (l *testReadLock) WriteNode(...string) releaseLock {
+	l.mx.Lock()
+	return func() { l.mx.Unlock() }
+}
+
+func (l *testReadLock) ReadTree(...string) releaseLock {
+	return l.ReadNode()
+}
+
+func (l *testReadLock) WriteTree(...string) releaseLock {
+	return l.WriteNode()
+}
+
 func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) releaseLock, path []string, write bool) {
 	defer lockMethod(path...)()
 	n := tree.get(path...)
@@ -97,7 +126,7 @@ func testAccess(t *testing.T, tree *testNode, lockMethod func(...string) release
 	cnt.inc()
 }
 
-func selectMethod(l *Lock) (func(...string) releaseLock, bool) {
+func selectMethod(l locker) (func(...string) releaseLock, bool) {
 	readMethods := []func(...string) releaseLock{
 		l.ReadNode,
 		l.ReadTree,
@@ -123,13 +152,13 @@ func selectPath(paths [][][]string) []string {
 	return paths[g][i]
 }
 
-func callTestAccess(t *testing.T, tree *testNode, l *Lock, paths [][][]string) {
+func callTestAccess(t *testing.T, tree *testNode, l locker, paths [][][]string) {
 	method, write := selectMethod(l)
 	path := selectPath(paths)
 	testAccess(t, tree, method, path, write)
 }
 
-func testLoop(t *testing.T, timeout <-chan struct{}, tree *testNode, l *Lock, paths [][][]string) {
+func testLoop(t *testing.T, timeout <-chan struct{}, tree *testNode, l locker, paths [][][]string) {
 	for {
 		select {
 		case <-timeout:
@@ -204,6 +233,7 @@ func testLockFuzzy(t *testing.T, d time.Duration) {
 	before := cnt.value()
 	l := New()
 	defer l.Close()
+	// l := &testReadLock{mx: &sync.RWMutex{}}
 	tree := buildTree()
 	paths := getAllPaths(tree)
 	gpaths := groupPaths(paths)
