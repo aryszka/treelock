@@ -1,21 +1,14 @@
 package treelock
 
 type node struct {
-	operations        list
-	subtreeOperations list
+	operations        listRange
+	subtreeOperations listRange
 	children          map[string]*node
 }
 
-type tree struct {
-	root *node
-}
-
-func newTree() *tree {
-	return &tree{&node{}}
-}
-
-func (t *tree) nodePath(path []string) []*node {
-	np := []*node{t.root}
+func nodePath(from *node, path []string) []*node {
+	np := make([]*node, 1, len(path)+1)
+	np[0] = from
 	for _, p := range path {
 		n, ok := np[len(np)-1].children[p]
 		if !ok {
@@ -33,27 +26,26 @@ func (t *tree) nodePath(path []string) []*node {
 	return np
 }
 
-func (t *tree) insert(nodePath []*node, o *operation) {
+func insert(nodePath []*node, o *operation) {
 	o.item = &item{operation: o}
 	n, nodePath := nodePath[len(nodePath)-1], nodePath[:len(nodePath)-1]
-	n.operations = n.operations.insert(o.item)
+	n.operations = insertTo(n.operations, o.item)
 	connect(n.operations, n.subtreeOperations)
 	for j := len(nodePath) - 1; j >= 0; j-- {
 		n = nodePath[j]
-		n.subtreeOperations = n.subtreeOperations.insert(o.item)
+		n.subtreeOperations = insertTo(n.subtreeOperations, o.item)
 		connect(n.operations, n.subtreeOperations)
 	}
 }
 
-func (t *tree) remove(o *operation) {
-	np := t.nodePath(o.path)
-	n := np[len(np)-1]
-	n.operations = n.operations.remove(o.item)
-	for j := len(np) - 1; j >= 0; j-- {
-		n = np[j]
-		n.subtreeOperations = n.subtreeOperations.remove(o.item)
+func remove(nodePath []*node, o *operation) {
+	n := nodePath[len(nodePath)-1]
+	n.operations = removeFrom(n.operations, o.item)
+	for j := len(nodePath) - 1; j >= 0; j-- {
+		n = nodePath[j]
+		n.subtreeOperations = removeFrom(n.subtreeOperations, o.item)
 		if j > 0 && n.operations.empty() && n.subtreeOperations.empty() {
-			delete(np[j-1].children, o.path[j-1])
+			delete(nodePath[j-1].children, o.path[j-1])
 		}
 	}
 }

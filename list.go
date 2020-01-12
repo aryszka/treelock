@@ -5,15 +5,15 @@ type item struct {
 	prev, next *item
 }
 
-type list struct {
+type listRange struct {
 	first, last *item
 }
 
-func (l list) empty() bool {
+func (l listRange) empty() bool {
 	return l.first == nil
 }
 
-func (l list) rangeOver(f func(*operation)) {
+func rangeOver(l listRange, f func(*operation)) {
 	if l.first == nil {
 		return
 	}
@@ -29,7 +29,7 @@ func (l list) rangeOver(f func(*operation)) {
 	}
 }
 
-func (l list) insert(i *item) list {
+func insertTo(l listRange, i *item) listRange {
 	if l.empty() {
 		l.first, l.last = i, i
 		return l
@@ -60,7 +60,7 @@ func (l list) insert(i *item) list {
 	return l
 }
 
-func (l list) remove(i *item) list {
+func removeFrom(l listRange, i *item) listRange {
 	if i.prev != nil {
 		i.prev.next = i.next
 	}
@@ -80,7 +80,7 @@ func (l list) remove(i *item) list {
 	return l
 }
 
-func connect(left, right list) {
+func connect(left, right listRange) {
 	if left.empty() || right.empty() {
 		return
 	}
@@ -94,15 +94,11 @@ func connect(left, right list) {
 		right.last.next = left.last.next
 	}
 
-	if right.first.prev == nil {
-		left.last.next = right.first
-		right.first.prev = left.last
-		return
+	if right.first.prev != nil {
+		right.first.prev.next = left.first
+		left.first.prev = right.first.prev
 	}
 
-	right.first.prev.next = left.first
-	left.first.prev = right.first.prev
 	left.last.next = right.first
 	right.first.prev = left.last
-	return
 }

@@ -9,7 +9,7 @@ check:
 	go test -short
 
 checkfull:
-	go test -v -count 1
+	go test -v -count 1 -race
 
 .cover: $(SOURCE)
 	go test -count 1 -coverprofile .cover -short

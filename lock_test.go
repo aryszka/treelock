@@ -5,9 +5,12 @@ import (
 	"time"
 )
 
-const minDelay = 9 * time.Millisecond
+const (
+	minDelay        = 9 * time.Millisecond
+	maxTestDuration = time.Second
+)
 
-func testLocked(t *testing.T, l *Lock, release func(), method func(...string) func(), path ...string) {
+func testLocked(t *testing.T, l *L, release func(), method func(...string) func(), path ...string) {
 	released := make(chan struct{})
 	access := func() <-chan struct{} {
 		done := make(chan struct{})
@@ -35,16 +38,33 @@ func testLocked(t *testing.T, l *Lock, release func(), method func(...string) fu
 	<-done2
 }
 
+func testRun(t *testing.T, name string, test func(*testing.T)) {
+	t.Run(name, func(t *testing.T) {
+		done := make(chan struct{})
+		timeout := time.After(maxTestDuration)
+		go func() {
+			select {
+			case <-done:
+			case <-timeout:
+				panic("test did not complete: " + t.Name())
+			}
+		}()
+
+		test(t)
+		close(done)
+	})
+}
+
 func TestLockRead(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("single", func(t *testing.T) {
-			l := New()
+		testRun(t, "single", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode()
 			r()
 		})
 
-		t.Run("multiple", func(t *testing.T) {
-			l := New()
+		testRun(t, "multiple", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode()
 			r2 := l.ReadNode()
 			r1()
@@ -53,14 +73,14 @@ func TestLockRead(t *testing.T) {
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("single", func(t *testing.T) {
-			l := New()
+		testRun(t, "single", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode("foo", "bar")
 			r()
 		})
 
-		t.Run("multiple", func(t *testing.T) {
-			l := New()
+		testRun(t, "multiple", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.ReadNode("foo", "bar")
 			r1()
@@ -68,32 +88,32 @@ func TestLockRead(t *testing.T) {
 		})
 	})
 
-	t.Run("parent locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "parent locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("foo")
 		r2 := l.ReadNode("foo", "bar")
 		r2()
 		r1()
 	})
 
-	t.Run("sibling locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "sibling locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("foo", "bar")
 		r2 := l.ReadNode("foo", "baz")
 		r2()
 		r1()
 	})
 
-	t.Run("child locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "child locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("foo", "bar", "baz")
 		r2 := l.ReadNode("foo", "bar")
 		r2()
 		r1()
 	})
 
-	t.Run("has child and siblings", func(t *testing.T) {
-		l := New()
+	testRun(t, "has child and siblings", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("a")
 		r2 := l.ReadNode("b", "a")
 		r3 := l.ReadNode("c")
@@ -104,8 +124,8 @@ func TestLockRead(t *testing.T) {
 		r1()
 	})
 
-	t.Run("has lock and siblings", func(t *testing.T) {
-		l := New()
+	testRun(t, "has lock and siblings", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("a")
 		r2 := l.ReadNode("b")
 		r3 := l.ReadNode("c")
@@ -116,8 +136,8 @@ func TestLockRead(t *testing.T) {
 		r1()
 	})
 
-	t.Run("parent has item and sibling", func(t *testing.T) {
-		l := New()
+	testRun(t, "parent has item and sibling", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("a")
 		r2 := l.ReadNode("b")
 		r3 := l.ReadNode("a", "a")
@@ -126,8 +146,8 @@ func TestLockRead(t *testing.T) {
 		r1()
 	})
 
-	t.Run("parent has children and sibling", func(t *testing.T) {
-		l := New()
+	testRun(t, "parent has children and sibling", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadNode("a", "a")
 		r2 := l.ReadNode("b")
 		r3 := l.ReadNode("a", "b")
@@ -139,51 +159,51 @@ func TestLockRead(t *testing.T) {
 
 func TestLockWrite(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("unlocked", func(t *testing.T) {
-			l := New()
+		testRun(t, "unlocked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode()
 			r()
 		})
 
-		t.Run("locked", func(t *testing.T) {
-			l := New()
+		testRun(t, "locked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode()
 			testLocked(t, l, r, l.WriteNode)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("unlocked", func(t *testing.T) {
-			l := New()
+		testRun(t, "unlocked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar")
 			r()
 		})
 
-		t.Run("locked", func(t *testing.T) {
-			l := New()
+		testRun(t, "locked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar")
 		})
 	})
 
-	t.Run("parent locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "parent locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.WriteNode("foo")
 		r2 := l.WriteNode("foo", "bar")
 		r2()
 		r1()
 	})
 
-	t.Run("sibling locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "sibling locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.WriteNode("foo", "bar")
 		r2 := l.WriteNode("foo", "baz")
 		r2()
 		r1()
 	})
 
-	t.Run("child locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "child locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.WriteNode("foo", "bar", "baz")
 		r2 := l.WriteNode("foo", "bar")
 		r2()
@@ -193,44 +213,44 @@ func TestLockWrite(t *testing.T) {
 
 func TestLockReadWrite(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("read and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode()
 			testLocked(t, l, r, l.WriteNode)
 		})
 
-		t.Run("write and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode()
 			testLocked(t, l, r, l.ReadNode)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("read and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar")
 		})
 
-		t.Run("write and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar")
 			testLocked(t, l, r, l.ReadNode, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("read and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo")
 			r2 := l.WriteNode("foo", "bar")
 			r2()
 			r1()
 		})
 
-		t.Run("write and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo")
 			r2 := l.ReadNode("foo", "bar")
 			r2()
@@ -239,16 +259,16 @@ func TestLockReadWrite(t *testing.T) {
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("read and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.WriteNode("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar")
 			r2 := l.ReadNode("foo", "baz")
 			r2()
@@ -257,16 +277,16 @@ func TestLockReadWrite(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("read and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar", "baz")
 			r2 := l.WriteNode("foo", "bar")
 			r2()
 			r1()
 		})
 
-		t.Run("write and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar", "baz")
 			r2 := l.ReadNode("foo", "bar")
 			r2()
@@ -277,14 +297,14 @@ func TestLockReadWrite(t *testing.T) {
 
 func TestLockReadTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("single", func(t *testing.T) {
-			l := New()
+		testRun(t, "single", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree()
 			r()
 		})
 
-		t.Run("multiple", func(t *testing.T) {
-			l := New()
+		testRun(t, "multiple", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree()
 			r2 := l.ReadTree()
 			r2()
@@ -293,14 +313,14 @@ func TestLockReadTree(t *testing.T) {
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("single", func(t *testing.T) {
-			l := New()
+		testRun(t, "single", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar")
 			r()
 		})
 
-		t.Run("multiple", func(t *testing.T) {
-			l := New()
+		testRun(t, "multiple", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadTree("foo", "bar")
 			r2()
@@ -309,16 +329,16 @@ func TestLockReadTree(t *testing.T) {
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("root", func(t *testing.T) {
-			l := New()
+		testRun(t, "root", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree()
 			r2 := l.ReadTree("foo", "bar")
 			r2()
 			r1()
 		})
 
-		t.Run("non-root", func(t *testing.T) {
-			l := New()
+		testRun(t, "non-root", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadTree("foo", "bar", "baz")
 			r2()
@@ -326,8 +346,8 @@ func TestLockReadTree(t *testing.T) {
 		})
 	})
 
-	t.Run("sibling locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "sibling locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.ReadTree("foo", "bar")
 		r2 := l.ReadTree("foo", "baz")
 		r2()
@@ -335,16 +355,16 @@ func TestLockReadTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("root", func(t *testing.T) {
-			l := New()
+		testRun(t, "root", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadTree()
 			r2()
 			r1()
 		})
 
-		t.Run("non-root", func(t *testing.T) {
-			l := New()
+		testRun(t, "non-root", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar", "baz")
 			r2 := l.ReadTree("foo", "bar")
 			r2()
@@ -355,16 +375,16 @@ func TestLockReadTree(t *testing.T) {
 
 func TestLockReadReadTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("read and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode()
 			r2 := l.ReadTree()
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree()
 			r2 := l.ReadNode()
 			r2()
@@ -373,16 +393,16 @@ func TestLockReadReadTree(t *testing.T) {
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("read and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.ReadTree("foo", "bar")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadNode("foo", "bar")
 			r2()
@@ -391,16 +411,16 @@ func TestLockReadReadTree(t *testing.T) {
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("read and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.ReadTree("foo", "bar", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadNode("foo", "bar", "baz")
 			r2()
@@ -409,16 +429,16 @@ func TestLockReadReadTree(t *testing.T) {
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("read and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.ReadTree("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.ReadNode("foo", "baz")
 			r2()
@@ -427,16 +447,16 @@ func TestLockReadReadTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("read and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar", "baz")
 			r2 := l.ReadTree("foo", "bar")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar", "baz")
 			r2 := l.ReadNode("foo", "bar")
 			r2()
@@ -447,60 +467,60 @@ func TestLockReadReadTree(t *testing.T) {
 
 func TestLockWriteReadTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("write and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode()
 			testLocked(t, l, r, l.ReadTree)
 		})
 
-		t.Run("read tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree()
 			testLocked(t, l, r, l.WriteNode)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("write and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar")
 			testLocked(t, l, r, l.ReadTree, "foo", "bar")
 		})
 
-		t.Run("read tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("write and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar")
 			r2 := l.ReadTree("foo", "bar", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar", "baz")
 		})
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("write and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar")
 			r2 := l.ReadTree("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("read tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.WriteNode("foo", "baz")
 			r2()
@@ -509,14 +529,14 @@ func TestLockWriteReadTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("write and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar", "baz")
 			testLocked(t, l, r, l.ReadTree, "foo", "bar")
 		})
 
-		t.Run("read tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar", "baz")
 			r2 := l.WriteNode("foo", "bar")
 			r2()
@@ -527,49 +547,49 @@ func TestLockWriteReadTree(t *testing.T) {
 
 func TestLockWriteTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("unlocked", func(t *testing.T) {
-			l := New()
+		testRun(t, "unlocked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			r()
 		})
 
-		t.Run("locked", func(t *testing.T) {
-			l := New()
+		testRun(t, "locked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			testLocked(t, l, r, l.WriteTree)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("unlocked", func(t *testing.T) {
-			l := New()
+		testRun(t, "unlocked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			r()
 		})
 
-		t.Run("locked", func(t *testing.T) {
-			l := New()
+		testRun(t, "locked", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("root", func(t *testing.T) {
-			l := New()
+		testRun(t, "root", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			testLocked(t, l, r, l.WriteTree, "foo")
 		})
 
-		t.Run("non-root", func(t *testing.T) {
-			l := New()
+		testRun(t, "non-root", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar", "baz")
 		})
 	})
 
-	t.Run("sibling locked", func(t *testing.T) {
-		l := New()
+	testRun(t, "sibling locked", func(t *testing.T) {
+		l := new(L)
 		r1 := l.WriteTree("foo", "bar")
 		r2 := l.WriteTree("foo", "baz")
 		r2()
@@ -577,14 +597,14 @@ func TestLockWriteTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("root", func(t *testing.T) {
-			l := New()
+		testRun(t, "root", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo")
 			testLocked(t, l, r, l.WriteTree, "foo")
 		})
 
-		t.Run("non-root", func(t *testing.T) {
-			l := New()
+		testRun(t, "non-root", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar", "baz")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
@@ -593,60 +613,60 @@ func TestLockWriteTree(t *testing.T) {
 
 func TestLockReadWriteTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("read and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode()
 			testLocked(t, l, r, l.WriteTree)
 		})
 
-		t.Run("write tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			testLocked(t, l, r, l.ReadNode)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("read and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.ReadNode, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("read and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.WriteTree("foo", "bar", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.ReadNode, "foo", "bar", "baz")
 		})
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("read and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadNode("foo", "bar")
 			r2 := l.WriteTree("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteTree("foo", "bar")
 			r2 := l.ReadNode("foo", "baz")
 			r2()
@@ -655,14 +675,14 @@ func TestLockReadWriteTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("read and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadNode("foo", "bar", "baz")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and read", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteTree("foo", "bar", "baz")
 			r2 := l.ReadNode("foo", "bar")
 			r2()
@@ -673,60 +693,60 @@ func TestLockReadWriteTree(t *testing.T) {
 
 func TestLockWriteWriteTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("write and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode()
 			testLocked(t, l, r, l.WriteTree)
 		})
 
-		t.Run("write tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			testLocked(t, l, r, l.WriteNode)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("write and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("write and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and write tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar")
 			r2 := l.WriteTree("foo", "bar", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and write", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.WriteNode, "foo", "bar", "baz")
 		})
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("write and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and write tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteNode("foo", "bar")
 			r2 := l.WriteTree("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteTree("foo", "bar")
 			r2 := l.WriteNode("foo", "baz")
 			r2()
@@ -735,14 +755,14 @@ func TestLockWriteWriteTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("write and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteNode("foo", "bar", "baz")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and write", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and write", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteTree("foo", "bar", "baz")
 			r2 := l.WriteNode("foo", "bar")
 			r2()
@@ -753,58 +773,58 @@ func TestLockWriteWriteTree(t *testing.T) {
 
 func TestLockReadTreeWriteTree(t *testing.T) {
 	t.Run("root", func(t *testing.T) {
-		t.Run("read tree and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree()
 			testLocked(t, l, r, l.WriteTree)
 		})
 
-		t.Run("write tree and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree()
 			testLocked(t, l, r, l.ReadTree)
 		})
 	})
 
 	t.Run("non-root", func(t *testing.T) {
-		t.Run("read tree and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.ReadTree, "foo", "bar")
 		})
 	})
 
 	t.Run("parent locked", func(t *testing.T) {
-		t.Run("read tree and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar", "baz")
 		})
 
-		t.Run("write tree and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar")
 			testLocked(t, l, r, l.ReadTree, "foo", "bar", "baz")
 		})
 	})
 
 	t.Run("sibling locked", func(t *testing.T) {
-		t.Run("read tree and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.ReadTree("foo", "bar")
 			r2 := l.WriteTree("foo", "baz")
 			r2()
 			r1()
 		})
 
-		t.Run("write tree and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read tree", func(t *testing.T) {
+			l := new(L)
 			r1 := l.WriteTree("foo", "bar")
 			r2 := l.ReadTree("foo", "baz")
 			r2()
@@ -813,14 +833,14 @@ func TestLockReadTreeWriteTree(t *testing.T) {
 	})
 
 	t.Run("child locked", func(t *testing.T) {
-		t.Run("read tree and write tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "read tree and write tree", func(t *testing.T) {
+			l := new(L)
 			r := l.ReadTree("foo", "bar", "baz")
 			testLocked(t, l, r, l.WriteTree, "foo", "bar")
 		})
 
-		t.Run("write tree and read tree", func(t *testing.T) {
-			l := New()
+		testRun(t, "write tree and read tree", func(t *testing.T) {
+			l := new(L)
 			r := l.WriteTree("foo", "bar", "baz")
 			testLocked(t, l, r, l.ReadTree, "foo", "bar")
 		})
@@ -828,7 +848,7 @@ func TestLockReadTreeWriteTree(t *testing.T) {
 }
 
 func TestLockRace(t *testing.T) {
-	l := New()
+	l := new(L)
 
 	access := func() <-chan struct{} {
 		done := make(chan struct{})
