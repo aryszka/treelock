@@ -33,14 +33,13 @@ func (t *tree) nodePath(path []string) []*node {
 	return np
 }
 
-func (t *tree) insert(i *item) {
+func (t *tree) insert(nodePath []*node, i *item) {
 	i.element = &element{item: i}
-	np := t.nodePath(i.path)
-	n, np := np[len(np)-1], np[:len(np)-1]
+	n, nodePath := nodePath[len(nodePath)-1], nodePath[:len(nodePath)-1]
 	n.items = n.items.insert(i.element)
 	connect(n.items, n.subtreeItems)
-	for j := len(np) - 1; j >= 0; j-- {
-		n = np[j]
+	for j := len(nodePath) - 1; j >= 0; j-- {
+		n = nodePath[j]
 		n.subtreeItems = n.subtreeItems.insert(i.element)
 		connect(n.items, n.subtreeItems)
 	}

@@ -232,7 +232,6 @@ func groupPaths(paths [][]string) [][][]string {
 func testLockFuzzy(t *testing.T, d time.Duration) {
 	before := cnt.value()
 	l := New()
-	defer l.Close()
 	// l := &testReadLock{mx: &sync.RWMutex{}}
 	tree := buildTree()
 	paths := getAllPaths(tree)
